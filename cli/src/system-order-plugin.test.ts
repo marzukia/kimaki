@@ -31,6 +31,20 @@ describe('canonicalizeSystemOrder', () => {
     expect(fromB).toEqual([SKILLS, BASE, DISCORD, X])
   })
 
+  it('converges with a part BEFORE the first block', () => {
+    const fromA = canonicalizeSystemOrder([X, BASE, DISCORD])
+    const fromB = canonicalizeSystemOrder([X, DISCORD, BASE])
+    expect(fromA).toEqual(fromB)
+    expect(fromB).toEqual([X, BASE, DISCORD])
+  })
+
+  it('converges with MULTIPLE parts between the blocks', () => {
+    const fromA = canonicalizeSystemOrder([SKILLS, BASE, X, REMINDER, DISCORD])
+    const fromB = canonicalizeSystemOrder([SKILLS, DISCORD, X, REMINDER, BASE])
+    expect(fromA).toEqual(fromB)
+    expect(fromB).toEqual([SKILLS, BASE, DISCORD, X, REMINDER])
+  })
+
   it('is idempotent (second pass is a no-op reference)', () => {
     const once = canonicalizeSystemOrder([SKILLS, DISCORD, X, BASE])
     expect(canonicalizeSystemOrder(once)).toBe(once)

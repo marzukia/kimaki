@@ -19,6 +19,9 @@
 // same array reference) and fails safe to current behaviour.
 
 import type { Hooks, Plugin } from '@opencode-ai/plugin'
+import { createPluginLogger } from './plugin-logger.js'
+
+const logger = createPluginLogger('OPENCODE')
 
 // Stable substring of Kimaki's Discord addendum. See getOpencodeSystemMessage
 // in system-message.ts. A contract test asserts the real addendum still
@@ -78,10 +81,35 @@ export function canonicalizeSystemOrder(system: string[]): string[] {
 const systemOrderPlugin: Plugin = async () => {
   return {
     'experimental.chat.system.transform': (async (_input, output) => {
-      const canonical = canonicalizeSystemOrder(output.system)
-      if (canonical === output.system) return
-      // Mutate in place so other transform hooks keep their array reference.
-      output.system.splice(0, output.system.length, ...canonical)
+      try {
+        const system = output.system
+        if (!Array.isArray(system)) return
+        // Observability for the one drift that has no test and no other signal:
+        // if the Discord addendum is present but the OpenCode base-instruction
+        // signature isn't (e.g. OpenCode core reworded it), this plugin can't
+        // anchor and silently reverts to cold re-prefills. Surface it.
+        const hasDiscord = system.some((p) =>
+          matches(p, DISCORD_ADDENDUM_SIGNATURE),
+        )
+        const hasBase = system.some((p) => matches(p, OPENCODE_BASE_SIGNATURE))
+        if (hasDiscord && !hasBase) {
+          logger.warn(
+            '[system-order] Discord addendum present but base-instruction ' +
+              'signature not found — ordering fix is a no-op; the OpenCode base ' +
+              'wording may have drifted.',
+          )
+        }
+        const canonical = canonicalizeSystemOrder(system)
+        if (canonical === system) return
+        // Mutate in place so other transform hooks keep their array reference.
+        output.system.splice(0, system.length, ...canonical)
+      } catch (err) {
+        // Degrade to "no reordering" rather than killing the turn if a future
+        // change ever makes the reorder throw.
+        logger.warn(
+          `[system-order] transform failed, skipping reorder: ${String(err)}`,
+        )
+      }
     }) satisfies NonNullable<Hooks['experimental.chat.system.transform']>,
   }
 }
