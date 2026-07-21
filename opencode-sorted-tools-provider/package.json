@@ -19,6 +19,7 @@
     "vitest": "^3.2.4"
   },
   "dependencies": {
+    "@ai-sdk/openai-compatible": "^3.0.13",
     "@ai-sdk/provider": "^3.0.8"
   }
 }

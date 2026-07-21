@@ -454,6 +454,9 @@ importers:
 
   opencode-sorted-tools-provider:
     dependencies:
+      '@ai-sdk/openai-compatible':
+        specifier: ^3.0.13
+        version: 3.0.13(zod@4.4.3)
       '@ai-sdk/provider':
         specifier: ^3.0.8
         version: 3.0.10
@@ -703,6 +706,12 @@ packages:
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
+  '@ai-sdk/openai-compatible@3.0.13':
+    resolution: {integrity: sha512-s1l2bB1kHg+dj1YrV7/5Erm/AC+WDkO4aXdqc3NCIYWcomnuhxmrq4cCMvZBXIJdlIrLRq0DwWuKqNqQjgNV2g==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
   '@ai-sdk/openai@3.0.73':
     resolution: {integrity: sha512-+3x9oxHv9Xp33Iv2L8D+e5hqmZi64jofBKig/9611JKyfV59NdkaDDajtwc0CxOEfARgCVq1BW7dP+526gKOKw==}
     engines: {node: '>=18'}
@@ -715,9 +724,19 @@ packages:
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
+  '@ai-sdk/provider-utils@5.0.11':
+    resolution: {integrity: sha512-7/96wE+ZsKB35iS9ASyllrE4Ym/EolXEB7AkuJ5FI++fmS85BVTAs77890C+1Z2jwHfBKjBQSBmsliOsAh0iFQ==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
   '@ai-sdk/provider@3.0.10':
     resolution: {integrity: sha512-Q3BZ27qfpYqnCYGvE3vt+Qi6LGOF9R5Nmzn+9JoM1lCRsD9mYaIhfJLkSunN48nfGXJ6n+XNV0J/XVpqGQl7Dw==}
     engines: {node: '>=18'}
+
+  '@ai-sdk/provider@4.0.3':
+    resolution: {integrity: sha512-e0CpNWJUY7OxAFAnCZkw+ri9QOHWwTs1tXP42782KFGCU07qt8NiXCrCVowyCB5dP2r5/Uls+g2oPd8kOJn9dw==}
+    engines: {node: '>=22'}
 
   '@antfu/install-pkg@1.1.0':
     resolution: {integrity: sha512-MGQsmw10ZyI+EJo45CdSER4zEb+p31LpDAFp2Z3gkSd1yqVZGi0Ebx++YTEMonJy4oChEMLsxZ64j8FH6sSqtQ==}
@@ -3042,6 +3061,9 @@ packages:
   '@vladfrangu/async_event_emitter@2.4.7':
     resolution: {integrity: sha512-Xfe6rpCTxSxfbswi/W/Pz7zp1WWSNn4A0eW4mLkQUewCrXXtMj31lCg+iQyTkh/CkusZSq9eDflu7tjEDXUY6g==}
     engines: {node: '>=v14.0.0', npm: '>=7.0.0'}
+
+  '@workflow/serde@4.1.0':
+    resolution: {integrity: sha512-pav4F2BoirECWR7Nf1TKt+2eETcBj7jj4cBefQ8VXQCA6NPkaKeLfj/zMgi+3zYV5ZIBT4GuUiphsj0/b9hPQQ==}
 
   '@xmorse/deployment-utils@0.7.4':
     resolution: {integrity: sha512-L8/n9WmTpWEE2SpzN0RugceT4cPzxblpULv1crDrLJ1kilKAxsjFPeD4mI7CKjI7fV60iR68bhKi3RE9HE4vqg==}
@@ -6102,6 +6124,12 @@ snapshots:
       '@ai-sdk/provider-utils': 4.0.30(zod@4.4.3)
       zod: 4.4.3
 
+  '@ai-sdk/openai-compatible@3.0.13(zod@4.4.3)':
+    dependencies:
+      '@ai-sdk/provider': 4.0.3
+      '@ai-sdk/provider-utils': 5.0.11(zod@4.4.3)
+      zod: 4.4.3
+
   '@ai-sdk/openai@3.0.73(zod@4.4.3)':
     dependencies:
       '@ai-sdk/provider': 3.0.10
@@ -6115,7 +6143,19 @@ snapshots:
       eventsource-parser: 3.1.0
       zod: 4.4.3
 
+  '@ai-sdk/provider-utils@5.0.11(zod@4.4.3)':
+    dependencies:
+      '@ai-sdk/provider': 4.0.3
+      '@standard-schema/spec': 1.1.0
+      '@workflow/serde': 4.1.0
+      eventsource-parser: 3.1.0
+      zod: 4.4.3
+
   '@ai-sdk/provider@3.0.10':
+    dependencies:
+      json-schema: 0.4.0
+
+  '@ai-sdk/provider@4.0.3':
     dependencies:
       json-schema: 0.4.0
 
@@ -8268,6 +8308,8 @@ snapshots:
       tinyrainbow: 2.0.0
 
   '@vladfrangu/async_event_emitter@2.4.7': {}
+
+  '@workflow/serde@4.1.0': {}
 
   '@xmorse/deployment-utils@0.7.4(@types/node@25.9.4)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0)':
     dependencies:
