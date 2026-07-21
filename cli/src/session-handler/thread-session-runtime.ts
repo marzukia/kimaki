@@ -3059,6 +3059,10 @@ export class ThreadSessionRuntime {
         worktree,
         currentAgent: resolvedAgent,
         worktreeChanged,
+        sessionId: session.id,
+        channelId,
+        threadId: this.thread.id,
+        guildId: this.thread.guildId,
       })
       const parts = [
         { type: 'text' as const, text: promptWithImagePaths },
@@ -3776,6 +3780,10 @@ export class ThreadSessionRuntime {
       worktree,
       currentAgent: earlyAgentPreference,
       worktreeChanged,
+      sessionId: session.id,
+      channelId,
+      threadId: this.thread.id,
+      guildId: this.thread.guildId,
     })
     const parts = [
       { type: 'text' as const, text: promptWithImagePaths },
