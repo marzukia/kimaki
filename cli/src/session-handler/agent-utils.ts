@@ -13,7 +13,10 @@ import {
 import { createLogger } from '../logger.js'
 import { OpenCodeSdkError } from '../errors.js'
 import { type initializeOpencodeForDirectory } from '../opencode.js'
-import { type AgentInfo } from '../system-message.js'
+import {
+  toSystemMessageAgents,
+  type AgentInfo,
+} from '../system-message.js'
 
 const agentLogger = createLogger('agent')
 
@@ -55,10 +58,13 @@ export async function resolveValidatedAgentPreference({
     return { agentPreference: agentPreference || undefined, agents: [] }
   }
 
-  if (!agentPreference) {
-    return { agentPreference: undefined, agents: [] }
-  }
-
+  // The agents list is ALWAYS fetched, even without an agent preference. It
+  // feeds the "Available agents" section of getOpencodeSystemMessage, which
+  // must be byte-identical across every path that prompts a session — the
+  // voice-tools path (fetchAvailableAgents in message-preprocessing.ts)
+  // always embeds the list, so an empty list here would produce a shorter
+  // system prompt for the same session and snap the shared KV-cache prefix
+  // at the agents section.
   const agentsResponse = await getClient().app.agents({ directory })
     .catch((e) => new OpenCodeSdkError({ operation: 'app.agents', cause: e }))
   if (agentsResponse instanceof Error) {
@@ -71,17 +77,13 @@ export async function resolveValidatedAgentPreference({
   }
 
   const availableAgents = agentsResponse.data || []
-  // Non-hidden primary/all agents for system message context
-  const agents: AgentInfo[] = availableAgents
-    .filter((a) => {
-      return (
-        (a.mode === 'primary' || a.mode === 'all') &&
-        !a.hidden
-      )
-    })
-    .map((a) => {
-      return { name: a.name, description: a.description }
-    })
+  // Non-hidden primary/all agents for system message context. Uses the shared
+  // projection so this path and fetchAvailableAgents can never drift apart.
+  const agents: AgentInfo[] = toSystemMessageAgents(availableAgents)
+
+  if (!agentPreference) {
+    return { agentPreference: undefined, agents }
+  }
 
   const hasAgent = availableAgents.some((availableAgent) => {
     return availableAgent.name === agentPreference

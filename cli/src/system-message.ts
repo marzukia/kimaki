@@ -6,8 +6,11 @@
 
 import { getDataDir } from './config.js'
 import { store } from './store.js'
+import { persistCanonicalAddendum } from './system-addendum-store.js'
 
-function getCritiqueInstructions(sessionId: string) {
+// Deliberately takes no session id: the body only ever references the static
+// <current_session_id> placeholder, keeping live ids out of the cached prefix.
+function getCritiqueInstructions() {
   return `
 ## showing diffs
 
@@ -92,7 +95,7 @@ asks you to explain or review a diff — the output is much richer than a plain 
 user explicitly asks for a code review or diff explanation. Always warn the user it will take
 a while before running it. Set Bash tool timeout to at least 25 minutes (\`timeout: 1_500_000\`).
 
-Always pass \`--agent opencode\` and \`--session ${sessionId}\` so the reviewer has context about
+Always pass \`--agent opencode\` and \`--session <current_session_id>\` so the reviewer has context about
 why the changes were made. If you know other session IDs that produced the diff (e.g. from
 \`kimaki session list\` or from the thread history), pass them too with additional \`--session\` flags.
 
@@ -100,22 +103,22 @@ Examples:
 
 \`\`\`bash
 # Review working tree changes
-bunx critique review --web --agent opencode --session ${sessionId}
+bunx critique review --web --agent opencode --session <current_session_id>
 
 # Review staged changes
-bunx critique review --staged --web --agent opencode --session ${sessionId}
+bunx critique review --staged --web --agent opencode --session <current_session_id>
 
 # Review a specific commit
-bunx critique review --commit HEAD --web --agent opencode --session ${sessionId}
+bunx critique review --commit HEAD --web --agent opencode --session <current_session_id>
 
 # Review branch changes compared to main
-bunx critique review main...HEAD --web --agent opencode --session ${sessionId}
+bunx critique review main...HEAD --web --agent opencode --session <current_session_id>
 
 # Review with multiple session contexts (current + the session that made the changes)
-bunx critique review --commit abc1234 --web --agent opencode --session ${sessionId} --session ses_other_session_id
+bunx critique review --commit abc1234 --web --agent opencode --session <current_session_id> --session ses_other_session_id
 
 # Review only specific files
-bunx critique review --web --agent opencode --session ${sessionId} --filter "src/**/*.ts"
+bunx critique review --web --agent opencode --session <current_session_id> --filter "src/**/*.ts"
 \`\`\`
 
 The command prints a preview URL when done — share that URL with the user.
@@ -279,6 +282,23 @@ export type AgentInfo = {
   description?: string
 }
 
+// Shared filter/projection for the "Available agents" section. Every path
+// that resolves an agents list for getOpencodeSystemMessage MUST go through
+// this so the section is byte-identical across call sites (a divergent filter
+// in one path produces a different system prompt for the same session and
+// snaps the shared KV-cache prefix).
+export function toSystemMessageAgents(
+  agents: Array<{ name: string; description?: string; mode?: string; hidden?: boolean }>,
+): AgentInfo[] {
+  return agents
+    .filter((a) => {
+      return (a.mode === 'primary' || a.mode === 'all') && !a.hidden
+    })
+    .map((a) => {
+      return { name: a.name, description: a.description }
+    })
+}
+
 function escapePromptAttribute(value: string): string {
   return value
     .replaceAll('&', '&amp;')
@@ -303,6 +323,10 @@ export function getOpencodePromptContext({
   worktree,
   currentAgent,
   worktreeChanged,
+  sessionId,
+  channelId,
+  threadId,
+  guildId,
 }: {
   username?: string
   userId?: string
@@ -312,7 +336,27 @@ export function getOpencodePromptContext({
   worktree?: WorktreeInfo
   currentAgent?: string
   worktreeChanged?: boolean
+  /** Current OpenCode session id. When provided, a <session-context> block is
+   * emitted mapping the static <current_*> placeholders to real values. */
+  sessionId?: string
+  channelId?: string
+  threadId?: string
+  guildId?: string
 }): string {
+  // Map the static system-prompt placeholders (<current_session_id> etc.) to
+  // this turn's real ids. Rendered exactly once, only when a sessionId is
+  // provided, so the command-only path (no ids) emits no block and the static
+  // system prefix stays byte-identical across threads/channels.
+  const sessionContext = sessionId
+    ? `<session-context>
+The system instructions use placeholder tokens for the current session's live identifiers. Wherever the instructions show these tokens, substitute the real values below:
+- \`<current_session_id>\` = ${sessionId}${
+        channelId ? `\n- \`<current_channel_id>\` = ${channelId}` : ''
+      }${threadId ? `\n- \`<current_thread_id>\` = ${threadId}` : ''}${
+        guildId ? `\n- \`<current_guild_id>\` = ${guildId}` : ''
+      }
+</session-context>`
+    : undefined
   const userAttrs = [
     ...(username
       ? [` name="${escapePromptAttribute(username)}"`]
@@ -335,6 +379,11 @@ ${escapePromptText(repliedMessage.text)}
 </replied-message>`
     : undefined
   const sections = [
+    // Per-turn date: env-compact-plugin strips the <env> date from the
+    // system prompt to keep the cached prefix stable across days, so the
+    // date is delivered here in the append-only tail instead.
+    `<system-reminder>\nCurrent date: ${new Date().toDateString()}\n</system-reminder>`,
+    ...(sessionContext ? [sessionContext] : []),
     ...(userAttrs ? [`<discord-user${userAttrs} />`] : []),
     ...(repliedMessageXml ? [repliedMessageXml] : []),
     ...(currentAgent
@@ -355,6 +404,16 @@ ${escapePromptText(repliedMessage.text)}
   return `${sections.join('\n\n')}\n`
 }
 
+// Deterministic, locale-independent comparison by Unicode code point, so the
+// same set of agent names produces the same order on every machine, process,
+// and locale (localeCompare depends on the ICU locale, which differs between
+// e.g. a systemd service without LANG and an interactive shell).
+function compareByCodePoint(a: string, b: string): number {
+  if (a < b) return -1
+  if (a > b) return 1
+  return 0
+}
+
 export function getOpencodeSystemMessage({
   sessionId,
   channelId,
@@ -363,8 +422,16 @@ export function getOpencodeSystemMessage({
   channelTopic,
   agents,
   userId,
+  directory,
 }: {
   sessionId: string
+  /**
+   * Accepted for backward compatibility; no longer changes the output. The
+   * body renders every section unconditionally with static placeholder
+   * tokens so the system prompt is byte-identical across call sites — a
+   * channel-gated section made channel-less prompt paths produce a shorter
+   * string for the SAME session and snapped the shared KV-cache prefix.
+   */
   channelId?: string
   /** Discord server/guild ID for discord_list_users tool */
   guildId?: string
@@ -374,20 +441,34 @@ export function getOpencodeSystemMessage({
   agents?: AgentInfo[]
   username?: string
   userId?: string
+  /**
+   * Project directory for this session. When provided, the rendered message
+   * is persisted as the canonical addendum for the directory so the
+   * system-addendum plugin can append the identical bytes to opencode
+   * requests that carry no per-message `system` (slash-command turns,
+   * post-compaction continues).
+   */
+  directory?: string
 }) {
-  const userArg = ` --user '${userId || '<discord-user-id>'}'`
-  const topicContext = channelTopic?.trim()
-    ? `\n\n<channel-topic>\n${channelTopic.trim()}\n</channel-topic>`
-    : ''
+  // userArg pinned to a constant literal so the static body is byte-identical
+  // across sessions/users. The real user id is delivered per-turn via the
+  // <discord-user user-id="..."/> tail tag and the <session-context> block.
+  const userArg = ` --user '<discord-user-id>'`
+  // channel-topic pinned absent: Discord channel topics are user-editable,
+  // and a topic edit rewrites the cached system prefix mid-session,
+  // cold-breaking the KV cache for every session in the channel. The
+  // channelTopic parameter is still accepted (callers fetch it) but ignored.
+  const topicContext = ''
   const availableAgentsContext =
     agents && agents.length > 0
-      ? `\n\nAvailable agents:\n${agents
+      ? `\n\nAvailable agents:\n${[...agents]
+          .sort((a, b) => compareByCodePoint(a.name, b.name))
           .map((agent) => {
             return `- \`${agent.name}\`${agent.description ? `: ${agent.description}` : ''}`
           })
           .join('\n')}`
       : ''
-  return `
+  const message = `
 The user is reading your messages from inside Discord, via kimaki.dev
 
 ## bash tool
@@ -409,7 +490,12 @@ interface BashToolInput {
 \`description\` is shown to the user in Discord as a summary of the bash call.
 \`hasSideEffect\` distinguishes essential bash calls from read-only ones in low-verbosity mode.
 
-Your current OpenCode session ID is: ${sessionId}${channelId ? `\nYour current Discord channel ID is: ${channelId}` : ''}${threadId ? `\nYour current Discord thread ID is: ${threadId}` : ''}${guildId ? `\nYour current Discord guild ID is: ${guildId}` : ''}
+Your current OpenCode session ID is: <current_session_id>
+Your current Discord channel ID is: <current_channel_id>
+Your current Discord thread ID is: <current_thread_id>
+Your current Discord guild ID is: <current_guild_id>
+
+The literal tokens above (\`<current_session_id>\`, \`<current_channel_id>\`, \`<current_thread_id>\`, \`<current_guild_id>\`) are placeholders. Their real values for this turn are delivered in the per-turn \`<session-context>\` synthetic user message part. Substitute the real values wherever these tokens appear in the instructions below.
 
 Per-turn Discord metadata like the current user and current agent is delivered in synthetic user message parts.
 
@@ -440,7 +526,7 @@ If there are internal kimaki issues (sessions not responding, bot errors, unexpe
 
 To upload files to the Discord thread (images, screenshots, long files that would clutter the chat), run:
 
-kimaki upload-to-discord --session ${sessionId} <file1> [file2] ...
+kimaki upload-to-discord --session <current_session_id> <file1> [file2] ...
 
 ## generating audio from text
 
@@ -449,11 +535,11 @@ When the user asks you to generate audio of some text so they can listen instead
 \`\`\`bash
 # generate audio from inline text
 kimaki tts 'Your summary goes here' -o /tmp/summary.mp3
-kimaki upload-to-discord --session ${sessionId} /tmp/summary.mp3
+kimaki upload-to-discord --session <current_session_id> /tmp/summary.mp3
 
 # generate audio from a file (pipe via stdin)
 cat docs/explanation.md | kimaki tts -o /tmp/explanation.mp3
-kimaki upload-to-discord --session ${sessionId} /tmp/explanation.mp3
+kimaki upload-to-discord --session <current_session_id> /tmp/explanation.mp3
 \`\`\`
 
 see --help for options like voice, speed, etc.
@@ -466,7 +552,7 @@ To ask the user to upload files from their device, use the \`kimaki_file_upload\
 
 To archive the current Discord thread (hide it from sidebar) and stop the session, run:
 
-kimaki session archive --session ${sessionId}
+kimaki session archive --session <current_session_id>
 
 Only do this when the user explicitly asks to close or archive the thread, and only after your final message.
 
@@ -486,17 +572,15 @@ The current user's ID is available in the per-turn \`<discord-user ... user-id="
 
 To search for Discord users in a guild as a best-effort fallback, run:
 
-kimaki user list --guild ${guildId || '<guildId>'} --query "username"
+kimaki user list --guild <current_guild_id> --query "username"
 
 This returns user IDs you can use for Discord mentions. It can fail when Server Members Intent is disabled, so prefer IDs from existing Discord metadata or raw mentions when possible.
-${
-  channelId
-    ? `
+
 ## starting new sessions from CLI
 
 To start a new thread/session in this channel pro-grammatically, run:
 
-kimaki send --channel ${channelId} --prompt 'your prompt here' --agent <current_agent>${userArg}
+kimaki send --channel <current_channel_id> --prompt 'your prompt here' --agent <current_agent>${userArg}
 
 You can use this to "spawn" parallel helper sessions like teammates: start new threads with focused prompts, then come back and collect the results.
 Prefer passing the current agent with \`--agent <current_agent>\` so spawned or scheduled sessions keep the same agent unless you are intentionally switching. Replace \`<current_agent>\` with the value from the per-turn \`Current agent\` reminder.
@@ -522,19 +606,19 @@ Use this when you have the OpenCode session ID.
 
 Use --notify-only to create a notification thread without starting an AI session:
 
-kimaki send --channel ${channelId} --prompt 'User cancelled subscription' --notify-only --agent <current_agent>${userArg}
+kimaki send --channel <current_channel_id> --prompt 'User cancelled subscription' --notify-only --agent <current_agent>${userArg}
 
 Use --user with a Discord user ID or raw mention to add a specific Discord user to the new thread:
 
-kimaki send --channel ${channelId} --prompt 'Review the latest CI failure' --agent <current_agent>${userArg}
+kimaki send --channel <current_channel_id> --prompt 'Review the latest CI failure' --agent <current_agent>${userArg}
 
 Use --worktree to create a git worktree for the session (ONLY when the user explicitly asks for a worktree):
 
-kimaki send --channel ${channelId} --prompt 'Add dark mode support' --worktree dark-mode --agent <current_agent>${userArg}
+kimaki send --channel <current_channel_id> --prompt 'Add dark mode support' --worktree dark-mode --agent <current_agent>${userArg}
 
 Use --cwd to start a session in an existing project subfolder or git worktree directory:
 
-kimaki send --channel ${channelId} --prompt 'Run the restricted task' --cwd /path/to/project/restricted-task --agent <current_agent>${userArg}
+kimaki send --channel <current_channel_id> --prompt 'Run the restricted task' --cwd /path/to/project/restricted-task --agent <current_agent>${userArg}
 
 Important:
 - NEVER use \`--worktree\` unless the user explicitly requests a worktree. Most tasks should use normal threads without worktrees.
@@ -545,7 +629,7 @@ Important:
 
 Use --agent to specify which agent to use for the session:
 
-kimaki send --channel ${channelId} --prompt 'Plan the refactor of the auth module' --agent plan${userArg}
+kimaki send --channel <current_channel_id> --prompt 'Plan the refactor of the auth module' --agent plan${userArg}
 ${availableAgentsContext}
 
 ## running opencode commands via kimaki send
@@ -553,7 +637,7 @@ ${availableAgentsContext}
 You can trigger registered opencode commands (slash commands, skills, MCP prompts) by starting the \`--prompt\` with \`/commandname\`:
 
 kimaki send --thread <thread_id> --prompt '/review fix the auth module' --agent <current_agent>
-kimaki send --channel ${channelId} --prompt '/build-cmd update dependencies' --agent <current_agent>${userArg}
+kimaki send --channel <current_channel_id> --prompt '/build-cmd update dependencies' --agent <current_agent>${userArg}
 
 The command name must match a registered opencode command. If the command is not recognized, the prompt is sent as plain text to the model. This works for both new threads (\`--channel\`) and existing threads (\`--thread\`/\`--session\`).
 
@@ -569,8 +653,8 @@ kimaki send --thread <thread_id> --prompt '/<agentname>-agent' --agent <current_
 
 Use \`--send-at\` to schedule a one-time or recurring task:
 
-kimaki send --channel ${channelId} --prompt 'Reminder: review open PRs' --send-at '2026-03-01T09:00:00Z' --agent <current_agent>${userArg}
-kimaki send --channel ${channelId} --prompt 'Run weekly test suite and summarize failures' --send-at '0 9 * * 1' --agent <current_agent>${userArg}
+kimaki send --channel <current_channel_id> --prompt 'Reminder: review open PRs' --send-at '2026-03-01T09:00:00Z' --agent <current_agent>${userArg}
+kimaki send --channel <current_channel_id> --prompt 'Run weekly test suite and summarize failures' --send-at '0 9 * * 1' --agent <current_agent>${userArg}
 
 ALL scheduling is in UTC. Dates must be UTC ISO format ending with \`Z\`. Cron expressions also fire in UTC (e.g. \`0 9 * * 1\` means 9:00 UTC every Monday).
 When the user specifies a time without a timezone, ask them to confirm their timezone or the UTC equivalent. Never guess the user's timezone.
@@ -594,7 +678,7 @@ Notification strategy for scheduled tasks:
 - Without \`--user\`, there is no guaranteed direct user mention path; task output should mention users only when relevant.
 - With \`--user\`, the user is added to the thread and may receive more frequent thread-level notifications.
 - If a scheduled task completes with no actionable result and no user-visible change, prefer archiving the session after the final message so Discord does not keep a no-op thread highlighted.
-- Example no-op cleanup command: \`kimaki session archive --session ${sessionId}\`
+- Example no-op cleanup command: \`kimaki session archive --session <current_session_id>\`
 
 Manage scheduled tasks with:
 
@@ -606,14 +690,14 @@ kimaki task delete <id>
 
 Use case patterns:
 - Reminder flows: create deadline reminders in this channel with one-time \`--send-at\`; mention only if action is required.
-- Proactive reminders: when you encounter time-sensitive information during your work (e.g. creating an API key that expires in 90 days, a certificate with an expiration date, a trial period ending, a deadline mentioned in code comments), proactively schedule a \`--notify-only\` reminder before the expiration so the user gets notified in time. For example, if you generate an API key expiring on 2026-06-01, schedule a reminder a few days before: \`kimaki send --channel ${channelId} --prompt 'Reminder: <@USER_ID> the API key created on 2026-03-01 expires on 2026-06-01. Renew it before it breaks production.' --send-at '2026-05-28T09:00:00Z' --notify-only --agent <current_agent>\`. Always tell the user you scheduled the reminder so they know.
+- Proactive reminders: when you encounter time-sensitive information during your work (e.g. creating an API key that expires in 90 days, a certificate with an expiration date, a trial period ending, a deadline mentioned in code comments), proactively schedule a \`--notify-only\` reminder before the expiration so the user gets notified in time. For example, if you generate an API key expiring on 2026-06-01, schedule a reminder a few days before: \`kimaki send --channel <current_channel_id> --prompt 'Reminder: <@USER_ID> the API key created on 2026-03-01 expires on 2026-06-01. Renew it before it breaks production.' --send-at '2026-05-28T09:00:00Z' --notify-only --agent <current_agent>\`. Always tell the user you scheduled the reminder so they know.
 - Weekly QA: schedule "run full test suite, inspect failures, post summary, and mention the user via Discord ID only when failures require review".
 - Weekly benchmark automation: schedule a benchmark prompt that runs model evals, writes JSON outputs in the repo, commits results, and mentions only for regressions.
 - Recurring maintenance: use cron \`--send-at\` for repetitive tasks like rotating secrets, checking dependency updates, running security audits, or cleaning up stale branches. Example: \`--send-at "0 9 1 * *"\` to run on the 1st of every month.
-- Quiet no-op checks: if a recurring task checks something and finds nothing to report, let it post a brief final summary and then archive the session with \`kimaki session archive --session ${sessionId}\`. Example: a scheduled email triage run that finds no new emails should archive itself so it does not add noise to Discord.
+- Quiet no-op checks: if a recurring task checks something and finds nothing to report, let it post a brief final summary and then archive the session with \`kimaki session archive --session <current_session_id>\`. Example: a scheduled email triage run that finds no new emails should archive itself so it does not add noise to Discord.
 - Thread reminders: when the user says "remind me about this in 2 hours" (or any duration), use \`--send-at\` with \`--thread\` to resurface the current thread. Compute the future UTC time and send a mention so Discord shows a notification:
 
-kimaki send --session ${sessionId} --prompt 'Reminder: <@USER_ID> you asked to be reminded about this thread.' --send-at '<future_UTC_time>' --notify-only --agent <current_agent>
+kimaki send --session <current_session_id> --prompt 'Reminder: <@USER_ID> you asked to be reminded about this thread.' --send-at '<future_UTC_time>' --notify-only --agent <current_agent>
 
 Replace \`<future_UTC_time>\` with the computed UTC ISO timestamp. The \`--notify-only\` flag creates just a notification message without starting a new AI session. The \`<@userId>\` mention ensures the user gets a Discord notification.
 
@@ -628,7 +712,7 @@ ONLY create worktrees when the user explicitly asks for one. Never proactively u
 When the user asks to "create a worktree" or "make a worktree", they mean you should use the kimaki CLI to create it. Do NOT use raw \`git worktree add\` commands. Instead use:
 
 \`\`\`bash
-kimaki send --channel ${channelId} --prompt 'your task description' --worktree worktree-name --agent <current_agent>${userArg}
+kimaki send --channel <current_channel_id> --prompt 'your task description' --worktree worktree-name --agent <current_agent>${userArg}
 \`\`\`
 
 This creates a new Discord thread with an isolated git worktree and starts a session in it. The worktree name should be kebab-case and descriptive of the task.
@@ -644,7 +728,7 @@ Critical recursion guard:
 Use \`--cwd\` to start a session in an existing project subfolder or git worktree directory instead of the project root:
 
 \`\`\`bash
-kimaki send --channel ${channelId} --prompt 'Run restricted task X' --cwd /path/to/project/restricted-task --agent <current_agent>${userArg}
+kimaki send --channel <current_channel_id> --prompt 'Run restricted task X' --cwd /path/to/project/restricted-task --agent <current_agent>${userArg}
 \`\`\`
 
 The path must be inside the project or be a git worktree of the project (validated via \`git worktree list\`). The session resolves to the correct project channel but uses that path as its working directory, so subfolder \`opencode.json\` config can apply. Passing the project root itself is allowed and behaves like the default. Use \`--worktree\` to create a new worktree, \`--cwd\` to reuse an existing directory.
@@ -658,7 +742,7 @@ This is useful for automation (cron jobs, GitHub webhooks, n8n, etc.)
 When you are approaching the **context window limit** or the user explicitly asks to **handoff to a new thread**, use the \`kimaki send\` command to start a fresh session with context:
 
 \`\`\`bash
-kimaki send --channel ${channelId} --prompt 'Continuing from previous session: <summary of current task and state>' --agent <current_agent>${userArg}
+kimaki send --channel <current_channel_id> --prompt 'Continuing from previous session: <summary of current task and state>' --agent <current_agent>${userArg}
 \`\`\`
 
 The command automatically handles long prompts (over 2000 chars) by sending them as file attachments. With \`--notify-only\`, long prompts are split into multiple messages instead so the content is directly visible.
@@ -780,10 +864,8 @@ Use \`--wait\` when you need to:
 ## submodules
 
 When pulling submodules and they jump to a new commit, commit that submodule pointer update right away before doing other work. Otherwise critique diffs later will include the noisy submodule jump along with the real changes.
-`
-    : ''
-}
-${store.getState().critiqueEnabled ? getCritiqueInstructions(sessionId) : ''}
+
+${store.getState().critiqueEnabled ? getCritiqueInstructions() : ''}
 ${KIMAKI_TUNNEL_INSTRUCTIONS}
 ## markdown formatting
 
@@ -893,4 +975,8 @@ Examples:
 
 ${topicContext}
 `
+  if (directory) {
+    persistCanonicalAddendum({ directory, content: message })
+  }
+  return message
 }

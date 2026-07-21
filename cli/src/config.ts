@@ -28,6 +28,15 @@ export function getDataDir(): string {
     store.setState({ dataDir: tmpDir })
     return tmpDir
   }
+  // Inside the opencode server process (kimaki plugins) the bot's store is
+  // not populated; the bot passes its resolved data dir through the
+  // environment when spawning the server so plugin-side path helpers (e.g.
+  // the system-addendum store) resolve to the same directory as the bot.
+  const fromEnv = process.env.KIMAKI_DATA_DIR
+  if (fromEnv) {
+    store.setState({ dataDir: fromEnv })
+    return fromEnv
+  }
   store.setState({ dataDir: DEFAULT_DATA_DIR })
   return DEFAULT_DATA_DIR
 }

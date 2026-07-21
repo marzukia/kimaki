@@ -78,11 +78,11 @@ function parseSkillsBlock(part: string): SkillsBlock | undefined {
     }
   }
 
-  const leadingWhitespace = interior.slice(0, spans[0][0])
-  const trailingWhitespace = interior.slice(spans[spans.length - 1][1])
+  const leadingWhitespace = interior.slice(0, spans[0]![0])
+  const trailingWhitespace = interior.slice(spans[spans.length - 1]![1])
   const separators: string[] = []
   for (let i = 0; i < spans.length - 1; i += 1) {
-    separators.push(interior.slice(spans[i][1], spans[i + 1][0]))
+    separators.push(interior.slice(spans[i]![1], spans[i + 1]![0]))
   }
 
   return {
@@ -101,7 +101,7 @@ function parseSkillsBlock(part: string): SkillsBlock | undefined {
 function skillName(skill: string): string | undefined {
   const match = NAME_RE.exec(skill)
   if (!match) return undefined
-  return match[1].trim()
+  return match[1]!.trim()
 }
 
 // Deterministic, locale-independent comparison by Unicode code point, so the

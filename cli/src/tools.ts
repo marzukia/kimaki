@@ -23,6 +23,8 @@ import {
   initializeOpencodeForDirectory,
   getOpencodeSystemMessage,
 } from './discord-bot.js'
+import { getOpencodePromptContext } from './system-message.js'
+import { fetchAvailableAgents } from './message-preprocessing.js'
 
 export async function getTools({
   onMessageCompleted,
@@ -44,6 +46,12 @@ export async function getTools({
   const client = getClient()
 
   const markdownRenderer = new ShareMarkdown(client)
+
+  // Agents list for the session system message. Fetched once so both prompt
+  // paths below embed the same agents section as the Discord-thread path —
+  // getOpencodeSystemMessage must produce byte-identical output across every
+  // call site or the shared KV-cache prefix snaps where they diverge.
+  const availableAgents = await fetchAvailableAgents(getClient, directory)
 
   const providersResponse = await client.config.providers()
   const providers: Provider[] = providersResponse.data?.providers || []
@@ -79,12 +87,23 @@ export async function getTools({
         const sessionModel = await getSessionModel(sessionId)
 
         // do not await
+        // Deliver the real session id via the per-turn tail so it is not baked
+        // into the (now placeholder-only) static system prompt. Only sessionId
+        // is in scope here; no Discord channel/thread/guild context.
+        const promptContext = getOpencodePromptContext({ sessionId })
         getClient()
           .session.promptAsync({
             sessionID: sessionId,
-            parts: [{ type: 'text', text: message }],
+            parts: [
+              { type: 'text' as const, text: message },
+              { type: 'text' as const, text: promptContext, synthetic: true },
+            ],
             model: sessionModel,
-            system: getOpencodeSystemMessage({ sessionId }),
+            system: getOpencodeSystemMessage({
+              sessionId,
+              agents: availableAgents,
+              directory,
+            }),
           })
           .then(async (response) => {
             const markdownResult = await markdownRenderer.generate({
@@ -149,11 +168,25 @@ export async function getTools({
           }
 
           // do not await
+          const newChatContext = getOpencodePromptContext({
+            sessionId: session.data.id,
+          })
           getClient()
             .session.promptAsync({
               sessionID: session.data.id,
-              parts: [{ type: 'text', text: message }],
-              system: getOpencodeSystemMessage({ sessionId: session.data.id }),
+              parts: [
+                { type: 'text' as const, text: message },
+                {
+                  type: 'text' as const,
+                  text: newChatContext,
+                  synthetic: true,
+                },
+              ],
+              system: getOpencodeSystemMessage({
+                sessionId: session.data.id,
+                agents: availableAgents,
+                directory,
+              }),
             })
             .then(async (response) => {
               const markdownResult = await markdownRenderer.generate({

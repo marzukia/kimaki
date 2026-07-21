@@ -11,7 +11,11 @@ import type { Message, ThreadChannel } from 'discord.js'
 import { DiscordOperationError, OpenCodeSdkError } from './errors.js'
 import type { DiscordFileAttachment } from './message-formatting.js'
 import type { PreprocessResult } from './session-handler/thread-session-runtime.js'
-import type { AgentInfo, RepliedMessageContext } from './system-message.js'
+import {
+  toSystemMessageAgents,
+  type AgentInfo,
+  type RepliedMessageContext,
+} from './system-message.js'
 import {
   resolveMentions,
   getFileAttachments,
@@ -36,7 +40,7 @@ export const VOICE_MESSAGE_TRANSCRIPTION_PREFIX =
   'Voice message transcription from Discord user:\n'
 
 /** Fetch available agents from OpenCode for voice transcription agent selection. */
-async function fetchAvailableAgents(
+export async function fetchAvailableAgents(
   getClient: Awaited<ReturnType<typeof initializeOpencodeForDirectory>>,
   directory: string,
 ): Promise<AgentInfo[]> {
@@ -48,13 +52,9 @@ async function fetchAvailableAgents(
   if (result instanceof Error) {
     return []
   }
-  return (result.data || [])
-    .filter((a) => {
-      return (a.mode === 'primary' || a.mode === 'all') && !a.hidden
-    })
-    .map((a) => {
-      return { name: a.name, description: a.description }
-    })
+  // Shared projection with resolveValidatedAgentPreference (agent-utils.ts)
+  // so both prompt paths embed an identical "Available agents" section.
+  return toSystemMessageAgents(result.data || [])
 }
 
 export type { PreprocessResult }

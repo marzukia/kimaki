@@ -3059,6 +3059,10 @@ export class ThreadSessionRuntime {
         worktree,
         currentAgent: resolvedAgent,
         worktreeChanged,
+        sessionId: session.id,
+        channelId,
+        threadId: this.thread.id,
+        guildId: this.thread.guildId,
       })
       const parts = [
         { type: 'text' as const, text: promptWithImagePaths },
@@ -3079,6 +3083,7 @@ export class ThreadSessionRuntime {
           agents: availableAgents,
           username: this.state?.sessionUsername || input.username,
           userId: this.state?.sessionUserId || input.userId,
+          directory: this.sdkDirectory,
         }),
         ...(resolvedAgent ? { agent: resolvedAgent } : {}),
         ...(modelField ? { model: modelField } : {}),
@@ -3776,6 +3781,10 @@ export class ThreadSessionRuntime {
       worktree,
       currentAgent: earlyAgentPreference,
       worktreeChanged,
+      sessionId: session.id,
+      channelId,
+      threadId: this.thread.id,
+      guildId: this.thread.guildId,
     })
     const parts = [
       { type: 'text' as const, text: promptWithImagePaths },
@@ -3924,6 +3933,7 @@ export class ThreadSessionRuntime {
         agents: earlyAvailableAgents,
         username: this.state?.sessionUsername || input.username,
         userId: this.state?.sessionUserId || input.userId,
+        directory: this.sdkDirectory,
       }),
       model: earlyModelParam,
       agent: earlyAgentPreference,
