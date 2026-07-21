@@ -84,4 +84,38 @@ describe('canonicalizeSystemBlocks', () => {
     const once = canonicalizeSystemBlocks(input)
     expect(canonicalizeSystemBlocks(once)).toBe(once)
   })
+
+  it('preserves entry bodies containing angle brackets and nested same-name tags', () => {
+    // A <description>-style body with a stray '>' and a nested <name> inside
+    // an entry's text must ride along untouched; the sort key is the FIRST
+    // <name> (references) / the name attribute (servers).
+    const weird =
+      `  <reference>\n` +
+      `    <name>zz</name>\n` +
+      `    <path>/x</path>\n` +
+      `    <description>uses a -> arrow and a fake <name>inner</name> tag</description>\n` +
+      `  </reference>`
+    const part = `<available_references>\n${weird}\n${reference('aa')}\n</available_references>`
+    const [result] = canonicalizeSystemBlocks([part])
+    expect(result).toBe(
+      `<available_references>\n${reference('aa')}\n${weird}\n</available_references>`,
+    )
+  })
+
+  it('only touches the FIRST block of a given type (documented limitation)', () => {
+    const part = `${referencesBlock(['b', 'a'])}\n${referencesBlock(['d', 'c'])}`
+    const [result] = canonicalizeSystemBlocks([part])
+    expect(result).toBe(
+      `${referencesBlock(['a', 'b'])}\n${referencesBlock(['d', 'c'])}`,
+    )
+  })
+
+  it('server entries whose instructions contain a > are preserved byte-for-byte', () => {
+    const tricky = `  <server name="zeta">\n    if x > 3 then stop\n  </server>`
+    const part = `<mcp_instructions>\n${tricky}\n${server('alpha')}\n</mcp_instructions>`
+    const [result] = canonicalizeSystemBlocks([part])
+    expect(result).toBe(
+      `<mcp_instructions>\n${server('alpha')}\n${tricky}\n</mcp_instructions>`,
+    )
+  })
 })

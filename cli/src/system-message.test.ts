@@ -933,6 +933,24 @@ describe('system-message', () => {
     }
   })
 
+  test('agents projection is shared and stable across resolution paths', async () => {
+    // Both prompt paths (fetchAvailableAgents and
+    // resolveValidatedAgentPreference) must project the raw app.agents()
+    // response through toSystemMessageAgents; a divergent filter in one path
+    // embeds a different "Available agents" section for the same session.
+    const { toSystemMessageAgents } = await import('./system-message.js')
+    const raw = [
+      { name: 'build', description: 'edits', mode: 'primary', hidden: false },
+      { name: 'explore', description: 'ro', mode: 'subagent', hidden: false },
+      { name: 'secret', description: 's', mode: 'all', hidden: true },
+      { name: 'plan', description: 'plans', mode: 'all', hidden: false },
+    ]
+    expect(toSystemMessageAgents(raw)).toEqual([
+      { name: 'build', description: 'edits' },
+      { name: 'plan', description: 'plans' },
+    ])
+  })
+
   test('session-context tail maps placeholders to real ids only when provided', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))

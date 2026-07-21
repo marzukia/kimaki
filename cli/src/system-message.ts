@@ -8,7 +8,9 @@ import { getDataDir } from './config.js'
 import { store } from './store.js'
 import { persistCanonicalAddendum } from './system-addendum-store.js'
 
-function getCritiqueInstructions(sessionId: string) {
+// Deliberately takes no session id: the body only ever references the static
+// <current_session_id> placeholder, keeping live ids out of the cached prefix.
+function getCritiqueInstructions() {
   return `
 ## showing diffs
 
@@ -278,6 +280,23 @@ export function isInjectedPromptMarker({
 export type AgentInfo = {
   name: string
   description?: string
+}
+
+// Shared filter/projection for the "Available agents" section. Every path
+// that resolves an agents list for getOpencodeSystemMessage MUST go through
+// this so the section is byte-identical across call sites (a divergent filter
+// in one path produces a different system prompt for the same session and
+// snaps the shared KV-cache prefix).
+export function toSystemMessageAgents(
+  agents: Array<{ name: string; description?: string; mode?: string; hidden?: boolean }>,
+): AgentInfo[] {
+  return agents
+    .filter((a) => {
+      return (a.mode === 'primary' || a.mode === 'all') && !a.hidden
+    })
+    .map((a) => {
+      return { name: a.name, description: a.description }
+    })
 }
 
 function escapePromptAttribute(value: string): string {
@@ -846,7 +865,7 @@ Use \`--wait\` when you need to:
 
 When pulling submodules and they jump to a new commit, commit that submodule pointer update right away before doing other work. Otherwise critique diffs later will include the noisy submodule jump along with the real changes.
 
-${store.getState().critiqueEnabled ? getCritiqueInstructions(sessionId) : ''}
+${store.getState().critiqueEnabled ? getCritiqueInstructions() : ''}
 ${KIMAKI_TUNNEL_INSTRUCTIONS}
 ## markdown formatting
 

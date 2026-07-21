@@ -85,7 +85,12 @@ export function sortToolsInParams(
 
 // AI SDK middleware that pins the tool order for every generate/stream call.
 // Wrap a model with the AI SDK's wrapLanguageModel({ model, middleware }) or
-// the withSortedTools helper below.
+// the withSortedTools helper below. NOTE: prefer withSortedTools — the
+// installed @ai-sdk/openai-compatible already emits LanguageModelV4-shaped
+// models, and wrapLanguageModel version-gates middleware on
+// specificationVersion, so this v3-tagged middleware may be rejected against
+// newer models. withSortedTools is version-agnostic (it only touches
+// doGenerate/doStream params) and is what provider.ts uses.
 export const sortToolsMiddleware: LanguageModelV3Middleware = {
   specificationVersion: 'v3',
   transformParams: async ({ params }) => sortToolsInParams(params),

@@ -71,7 +71,13 @@ export function persistCanonicalAddendum({
       // Missing file: fall through to write.
     }
     fs.mkdirSync(path.dirname(file), { recursive: true })
-    fs.writeFileSync(file, content)
+    // Atomic write (temp + rename): the plugin in the opencode server process
+    // reads this file on request paths, so a direct truncate-and-write could
+    // expose a partial file mid-write and splice a corrupted addendum into a
+    // system prompt.
+    const tmp = `${file}.${process.pid}.tmp`
+    fs.writeFileSync(tmp, content)
+    fs.renameSync(tmp, file)
   } catch {
     // Best-effort only.
   }
