@@ -57,14 +57,14 @@ describe('canonicalizeSkillsOrder', () => {
     const result = canonicalizeSkillsOrder(input)
     expect(result).toEqual([before + block(['debug-session', 'egaki']) + after])
     // The bytes before and after the block are untouched.
-    expect(result[0].startsWith(before)).toBe(true)
-    expect(result[0].endsWith(after)).toBe(true)
-    expect(result[0]).toContain('sessionId: ses_abc123DEF456')
+    expect(result[0]!.startsWith(before)).toBe(true)
+    expect(result[0]!.endsWith(after)).toBe(true)
+    expect(result[0]!).toContain('sessionId: ses_abc123DEF456')
   })
 
   it('sorts the exact captured format so debug-session precedes egaki', () => {
     const result = canonicalizeSkillsOrder([CAPTURED])
-    const sorted = result[0]
+    const sorted = result[0]!
     expect(sorted.indexOf('<name>debug-session</name>')).toBeLessThan(
       sorted.indexOf('<name>egaki</name>'),
     )
