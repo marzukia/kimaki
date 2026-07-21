@@ -36,7 +36,7 @@ export const VOICE_MESSAGE_TRANSCRIPTION_PREFIX =
   'Voice message transcription from Discord user:\n'
 
 /** Fetch available agents from OpenCode for voice transcription agent selection. */
-async function fetchAvailableAgents(
+export async function fetchAvailableAgents(
   getClient: Awaited<ReturnType<typeof initializeOpencodeForDirectory>>,
   directory: string,
 ): Promise<AgentInfo[]> {

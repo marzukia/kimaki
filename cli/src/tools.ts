@@ -24,6 +24,7 @@ import {
   getOpencodeSystemMessage,
 } from './discord-bot.js'
 import { getOpencodePromptContext } from './system-message.js'
+import { fetchAvailableAgents } from './message-preprocessing.js'
 
 export async function getTools({
   onMessageCompleted,
@@ -45,6 +46,12 @@ export async function getTools({
   const client = getClient()
 
   const markdownRenderer = new ShareMarkdown(client)
+
+  // Agents list for the session system message. Fetched once so both prompt
+  // paths below embed the same agents section as the Discord-thread path —
+  // getOpencodeSystemMessage must produce byte-identical output across every
+  // call site or the shared KV-cache prefix snaps where they diverge.
+  const availableAgents = await fetchAvailableAgents(getClient, directory)
 
   const providersResponse = await client.config.providers()
   const providers: Provider[] = providersResponse.data?.providers || []
@@ -92,7 +99,11 @@ export async function getTools({
               { type: 'text' as const, text: promptContext, synthetic: true },
             ],
             model: sessionModel,
-            system: getOpencodeSystemMessage({ sessionId }),
+            system: getOpencodeSystemMessage({
+              sessionId,
+              agents: availableAgents,
+              directory,
+            }),
           })
           .then(async (response) => {
             const markdownResult = await markdownRenderer.generate({
@@ -171,7 +182,11 @@ export async function getTools({
                   synthetic: true,
                 },
               ],
-              system: getOpencodeSystemMessage({ sessionId: session.data.id }),
+              system: getOpencodeSystemMessage({
+                sessionId: session.data.id,
+                agents: availableAgents,
+                directory,
+              }),
             })
             .then(async (response) => {
               const markdownResult = await markdownRenderer.generate({

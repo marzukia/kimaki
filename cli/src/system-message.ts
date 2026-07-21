@@ -6,6 +6,7 @@
 
 import { getDataDir } from './config.js'
 import { store } from './store.js'
+import { persistCanonicalAddendum } from './system-addendum-store.js'
 
 function getCritiqueInstructions(sessionId: string) {
   return `
@@ -384,6 +385,16 @@ ${escapePromptText(repliedMessage.text)}
   return `${sections.join('\n\n')}\n`
 }
 
+// Deterministic, locale-independent comparison by Unicode code point, so the
+// same set of agent names produces the same order on every machine, process,
+// and locale (localeCompare depends on the ICU locale, which differs between
+// e.g. a systemd service without LANG and an interactive shell).
+function compareByCodePoint(a: string, b: string): number {
+  if (a < b) return -1
+  if (a > b) return 1
+  return 0
+}
+
 export function getOpencodeSystemMessage({
   sessionId,
   channelId,
@@ -392,8 +403,16 @@ export function getOpencodeSystemMessage({
   channelTopic,
   agents,
   userId,
+  directory,
 }: {
   sessionId: string
+  /**
+   * Accepted for backward compatibility; no longer changes the output. The
+   * body renders every section unconditionally with static placeholder
+   * tokens so the system prompt is byte-identical across call sites — a
+   * channel-gated section made channel-less prompt paths produce a shorter
+   * string for the SAME session and snapped the shared KV-cache prefix.
+   */
   channelId?: string
   /** Discord server/guild ID for discord_list_users tool */
   guildId?: string
@@ -403,6 +422,14 @@ export function getOpencodeSystemMessage({
   agents?: AgentInfo[]
   username?: string
   userId?: string
+  /**
+   * Project directory for this session. When provided, the rendered message
+   * is persisted as the canonical addendum for the directory so the
+   * system-addendum plugin can append the identical bytes to opencode
+   * requests that carry no per-message `system` (slash-command turns,
+   * post-compaction continues).
+   */
+  directory?: string
 }) {
   // userArg pinned to a constant literal so the static body is byte-identical
   // across sessions/users. The real user id is delivered per-turn via the
@@ -416,13 +443,13 @@ export function getOpencodeSystemMessage({
   const availableAgentsContext =
     agents && agents.length > 0
       ? `\n\nAvailable agents:\n${[...agents]
-          .sort((a, b) => a.name.localeCompare(b.name))
+          .sort((a, b) => compareByCodePoint(a.name, b.name))
           .map((agent) => {
             return `- \`${agent.name}\`${agent.description ? `: ${agent.description}` : ''}`
           })
           .join('\n')}`
       : ''
-  return `
+  const message = `
 The user is reading your messages from inside Discord, via kimaki.dev
 
 ## bash tool
@@ -529,9 +556,7 @@ To search for Discord users in a guild as a best-effort fallback, run:
 kimaki user list --guild <current_guild_id> --query "username"
 
 This returns user IDs you can use for Discord mentions. It can fail when Server Members Intent is disabled, so prefer IDs from existing Discord metadata or raw mentions when possible.
-${
-  channelId
-    ? `
+
 ## starting new sessions from CLI
 
 To start a new thread/session in this channel pro-grammatically, run:
@@ -820,9 +845,7 @@ Use \`--wait\` when you need to:
 ## submodules
 
 When pulling submodules and they jump to a new commit, commit that submodule pointer update right away before doing other work. Otherwise critique diffs later will include the noisy submodule jump along with the real changes.
-`
-    : ''
-}
+
 ${store.getState().critiqueEnabled ? getCritiqueInstructions(sessionId) : ''}
 ${KIMAKI_TUNNEL_INSTRUCTIONS}
 ## markdown formatting
@@ -933,4 +956,8 @@ Examples:
 
 ${topicContext}
 `
+  if (directory) {
+    persistCanonicalAddendum({ directory, content: message })
+  }
+  return message
 }

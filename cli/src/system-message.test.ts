@@ -856,6 +856,83 @@ describe('system-message', () => {
     expect(body.indexOf('`mid`')).toBeLessThan(body.indexOf('`zeta`'))
   })
 
+  test('channel-less call sites produce byte-identical output to thread call sites', () => {
+    // tools.ts (voice/`kimaki send` follow-ups) builds the system message with
+    // only { sessionId, agents }; thread-session-runtime passes the full
+    // Discord id set. Both prompt the SAME sessions, so any byte difference
+    // between the two forms snaps the shared KV-cache prefix mid-session.
+    // The channel section must therefore render unconditionally (it is
+    // placeholder-only) and no other section may depend on the id args.
+    const agents = [
+      { name: 'build', description: 'edits files' },
+      { name: 'plan', description: 'planning only' },
+    ]
+    const threadForm = getOpencodeSystemMessage({
+      sessionId: 'ses_X',
+      channelId: 'chan_X',
+      threadId: 'thread_X',
+      guildId: 'guild_X',
+      channelTopic: 'some topic',
+      username: 'Tommy',
+      userId: 'user_X',
+      agents,
+    })
+    const toolsForm = getOpencodeSystemMessage({
+      sessionId: 'ses_Y',
+      agents,
+    })
+    expect(toolsForm).toBe(threadForm)
+    // Non-vacuous: the channel section is actually in both.
+    expect(toolsForm).toContain('## starting new sessions from CLI')
+  })
+
+  test('agents in different input orders produce byte-identical output', () => {
+    const orderA = getOpencodeSystemMessage({
+      sessionId: 'ses_1',
+      agents: [
+        { name: 'zeta', description: 'z' },
+        { name: 'alpha', description: 'a' },
+      ],
+    })
+    const orderB = getOpencodeSystemMessage({
+      sessionId: 'ses_1',
+      agents: [
+        { name: 'alpha', description: 'a' },
+        { name: 'zeta', description: 'z' },
+      ],
+    })
+    expect(orderA).toBe(orderB)
+    expect(orderA).toContain('`alpha`: a')
+  })
+
+  test('contains the addendum signature the system-addendum plugin keys on', async () => {
+    // The plugin detects an already-present addendum via this substring; if a
+    // wording change drops it the plugin would double-append. Contract-test it
+    // here so the change fails CI instead.
+    const { ADDENDUM_SIGNATURE } = await import('./system-addendum-store.js')
+    const body = getOpencodeSystemMessage({ sessionId: 'ses_123' })
+    expect(body).toContain(ADDENDUM_SIGNATURE)
+  })
+
+  test('persists the canonical addendum for the directory when asked', async () => {
+    const os = await import('node:os')
+    const fs = await import('node:fs')
+    const pathMod = await import('node:path')
+    const { addendumFilePath } = await import('./system-addendum-store.js')
+    const dir = fs.mkdtempSync(pathMod.join(os.tmpdir(), 'kimaki-addendum-'))
+    try {
+      const body = getOpencodeSystemMessage({
+        sessionId: 'ses_123',
+        agents: [{ name: 'build', description: 'edits files' }],
+        directory: dir,
+      })
+      const persisted = fs.readFileSync(addendumFilePath(dir), 'utf-8')
+      expect(persisted).toBe(body)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   test('session-context tail maps placeholders to real ids only when provided', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))

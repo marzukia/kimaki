@@ -787,6 +787,9 @@ async function startSingleServer({
         OPENCODE_CONFIG: opencodeConfigPath,
         OPENCODE_PORT: port.toString(),
         KIMAKI: '1',
+        // Let kimaki plugins running inside the opencode server resolve the
+        // same data dir as the bot (see getDataDir in config.ts).
+        KIMAKI_DATA_DIR: getDataDir(),
         OPENCODE_EXPERIMENTAL_WORKSPACES: 'true',
         KIMAKI_DATA_DIR: getDataDir(),
         KIMAKI_LOCK_PORT: getLockPort().toString(),
